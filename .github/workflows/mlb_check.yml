@@ -1,0 +1,30 @@
+name: MLB Pitcher Check
+
+on:
+  schedule:
+    # 14:00 Uhr Mitteleuropäische Sommerzeit (MESZ) ist 12:00 Uhr UTC
+    - cron: '0 12 * * *'
+  workflow_dispatch: # Erlaubt es dir, den Check jederzeit manuell in GitHub zu starten
+
+jobs:
+  check-pitchers:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-python: '3.x'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+
+    - name: Run Script
+      env:
+        HA_WEBHOOK_URL: ${{ secrets.HA_WEBHOOK_URL }}
+      run: python check_pitchers.py
