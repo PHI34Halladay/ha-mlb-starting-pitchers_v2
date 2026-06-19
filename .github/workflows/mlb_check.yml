@@ -3,7 +3,7 @@ name: MLB Pitcher Check
 on:
   schedule:
     # 14:00 Uhr Mitteleuropäische Sommerzeit (MESZ) ist 12:00 Uhr UTC
-    - cron: '30 18 * * *'
+    - cron: '12 20 * * *'
   workflow_dispatch: # Erlaubt es dir, den Check jederzeit manuell in GitHub zu starten
 
 jobs:
