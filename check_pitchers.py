@@ -3,6 +3,8 @@ import os
 import requests
 
 # Pitcher dynamisch aus Textdatei laden
+PITCHERS_FILE = "pitchers.txt"
+
 TRACKED_PITCHERS = set()
 if os.path.exists(PITCHERS_FILE):
     with open(PITCHERS_FILE, "r", encoding="utf-8") as f:
@@ -11,6 +13,9 @@ if os.path.exists(PITCHERS_FILE):
 else:
     print(f"FEHLER: {PITCHERS_FILE} wurde nicht gefunden!")
     exit(1)
+
+# Alias, damit weiter unten konsistent referenziert wird
+MY_PITCHERS = TRACKED_PITCHERS
 
 # Vollständiges MLB Mapping für alle 30 Teams (Kürzel & Kurzname)
 TEAM_MAP = {
@@ -48,8 +53,10 @@ TEAM_MAP = {
 
 HA_WEBHOOK_URL = os.environ.get("HA_WEBHOOK_URL")
 
+
 def get_team_info(team_name):
     return TEAM_MAP.get(team_name, {"abbr": team_name, "short": team_name})
+
 
 def convert_to_local_time(utc_string):
     if not utc_string:
@@ -63,18 +70,19 @@ def convert_to_local_time(utc_string):
     except Exception:
         return utc_string[11:16]
 
+
 def check_pitchers():
     today = datetime.date.today().strftime("%Y-%m-%d")
     url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}&hydrate=probablePitcher"
-    
+
     # "Browser-Tarnkappe" (User-Agent), damit die MLB-Firewall uns auf GitHub nicht blockiert
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    
+
     print(f"--- MLB-DIAGNOSE-LOGS FÜR DEN {today} ---")
     print(f"Rufe API auf: {url}")
-    
+
     try:
         res = requests.get(url, headers=headers, timeout=15)
         print(f"Server-Antwort Status-Code: {res.status_code}")
@@ -86,39 +94,41 @@ def check_pitchers():
 
     alerts = []
     dates = response.get("dates", [])
+
     if not dates:
         print("ℹ️ Keine Spiele im heutigen Kalender gefunden.")
         return
 
     print("\n--- Gefeaturte Spiele & Pitcher heute laut MLB-Datenbank: ---")
+
     for date_info in dates:
         for game in date_info.get("games", []):
             teams = game.get("teams", {})
             away_full = teams.get("away", {}).get("team", {}).get("name")
             home_full = teams.get("home", {}).get("team", {}).get("name")
-            
+
             away_info = get_team_info(away_full)
             home_info = get_team_info(home_full)
 
             local_time = convert_to_local_time(game.get("gameDate"))
-            
+
             away_pitcher = teams.get("away", {}).get("probablePitcher", {}).get("fullName")
             home_pitcher = teams.get("home", {}).get("probablePitcher", {}).get("fullName")
-            
+
             # Diagnose-Ausgabe für jedes Spiel im GitHub-Protokoll
             print(f"Match: {away_info['short']} @ {home_info['short']} um {local_time} Uhr")
-            print(f"   -> Starter Away: {away_pitcher if away_pitcher else 'TBD'}")
-            print(f"   -> Starter Home: {home_pitcher if home_pitcher else 'TBD'}")
+            print(f"  -> Starter Away: {away_pitcher if away_pitcher else 'TBD'}")
+            print(f"  -> Starter Home: {home_pitcher if home_pitcher else 'TBD'}")
 
             # Auswärtspitcher abgleichen
             if away_pitcher and away_pitcher in MY_PITCHERS:
                 alerts.append(f"⚾ {away_pitcher} ({away_info['abbr']}) | {local_time} @ {home_info['short']}")
-                print(f"   🎯 TREFFER! {away_pitcher} steht auf deiner Favoritenliste!")
+                print(f"  🎯 TREFFER! {away_pitcher} steht auf deiner Favoritenliste!")
 
             # Heimpitcher abgleichen
             if home_pitcher and home_pitcher in MY_PITCHERS:
                 alerts.append(f"⚾ {home_pitcher} ({home_info['abbr']}) | {local_time} vs. {away_info['short']}")
-                print(f"   🎯 TREFFER! {home_pitcher} steht auf deiner Favoritenliste!")
+                print(f"  🎯 TREFFER! {home_pitcher} steht auf deiner Favoritenliste!")
 
     print("\n--- Zusammenfassung ---")
     if alerts:
@@ -127,6 +137,7 @@ def check_pitchers():
         send_to_homeassistant(message)
     else:
         print("Es wurde heute kein Pitcher deiner Favoritenliste gefunden.")
+
 
 def send_to_homeassistant(text):
     if HA_WEBHOOK_URL:
@@ -138,5 +149,6 @@ def send_to_homeassistant(text):
     else:
         print("⚠️ Keine HA_WEBHOOK_URL als Secret in GitHub hinterlegt.")
 
+
 if __name__ == "__main__":
-    check_pitchers()
+    check_pitchers() 
