@@ -1,7 +1,7 @@
 import os
 import requests
 import statsapi
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ==========================================
 # 1. DYNAMISCHES LADEN DER PITCHER-LISTE
@@ -18,6 +18,20 @@ else:
     print(f"FEHLER: {txt_path} wurde nicht gefunden!")
     exit(1)
 
+# MLB Team-Mapping für exakte 3-Letter-Abkürzungen
+TEAM_MAP = {
+    "Arizona Diamondbacks": "ARI", "Atlanta Braves": "ATL", "Baltimore Orioles": "BAL",
+    "Boston Red Sox": "BOS", "Chicago Cubs": "CHC", "Chicago White Sox": "CWS",
+    "Cincinnati Reds": "CIN", "Cleveland Guardians": "CLE", "Colorado Rockies": "COL",
+    "Detroit Tigers": "DET", "Houston Astros": "HOU", "Kansas City Royals": "KC",
+    "Los Angeles Angels": "LAA", "Los Angeles Dodgers": "LAD", "Miami Marlins": "MIA",
+    "Milwaukee Brewers": "MIL", "Minnesota Twins": "MIN", "New York Mets": "NYM",
+    "New York Yankees": "NYY", "Oakland Athletics": "OAK", "Philadelphia Phillies": "PHI",
+    "Pittsburgh Pirates": "PIT", "San Diego Padres": "SD", "San Francisco Giants": "SF",
+    "Seattle Mariners": "SEA", "St. Louis Cardinals": "STL", "Tampa Bay Rays": "TB",
+    "Texas Rangers": "TEX", "Toronto Blue Jays": "TOR", "Washington Nationals": "WSH"
+}
+
 # ==========================================
 # 2. KONFIGURATION
 # ==========================================
@@ -29,7 +43,8 @@ print(f"Suche nach Spielen für den {today}...")
 # 3. API-ABFRAGE & TEXT-FORMATIERUNG
 # ==========================================
 try:
-    games = statsapi.schedule(date=today)
+    # Schedule inkl. Linescore laden, um sicher an die UTC-Uhrzeiten zu kommen
+    games = statsapi.schedule(date=today, hydration="linescore")
     starter_lines = []
 
     for game in games:
@@ -40,35 +55,47 @@ try:
         match_away = away_pitcher in TARGET_PITCHERS if away_pitcher else False
 
         if match_home or match_away:
-            # Relevante Daten extrahieren
             pitcher_name = home_pitcher if match_home else away_pitcher
             
-            # Team-Kürzel und Gegner ermitteln
+            # Teams auslesen
+            home_team_long = game.get("home_name", "")
+            away_team_long = game.get("away_name", "")
+            
+            # Kürzel aus Mapping holen (Fallback auf die ersten 3 Buchstaben, falls unbekannt)
+            home_code = TEAM_MAP.get(home_team_long, home_team_long[:3].upper())
+            away_code = TEAM_MAP.get(away_team_long, away_team_long[:3].upper())
+            
             if match_home:
-                team_code = game.get("home_name")[:3].upper() # Fallback-Kürzel
-                opponent = game.get("away_name")
-                # Versuche das echte Kürzel zu nehmen, falls vorhanden
-                message_team = f"{team_code}" 
-                vs_text = f"vs. {opponent}"
+                team_code = home_code
+                vs_text = f"vs. {away_code}"
             else:
-                team_code = game.get("away_name")[:3].upper()
-                opponent = game.get("home_name")
-                vs_text = f"@ {opponent}"
+                team_code = away_code
+                vs_text = f"@ {home_code}"
 
-            # Uhrzeit formatieren (Extrahiert HH:MM aus dem ISO-String)
-            # MLB-Times sind oft in UTC/ET, statsapi liefert meist lokale oder bereits formatierte Strings
+            # Uhrzeit aus "game_date" extrahieren und in deutsche Zeit konvertieren
             game_date_str = game.get("game_date", "")
-            try:
-                # Versuche die Uhrzeit sauber zu parsen (Beispiel: 2026-07-09T19:10:00Z)
-                dt = datetime.strptime(game_date_str, "%Y-%m-%dT%H:%M:%SZ")
-                # Hier kannst du bei Bedarf eine Zeitverschiebung einrechnen, falls die API UTC liefert:
-                # dt = dt + timedelta(hours=2) # Für deutsche Sommerzeit
-                time_str = dt.strftime("%H:%M")
-            except:
-                # Fallback, falls das Format abweicht
-                time_str = game_date_str[-8:-3] if len(game_date_str) > 10 else "??:??"
+            time_str = "??:??"
+            
+            if game_date_str:
+                try:
+                    # statsapi liefert meistens "YYYY-MM-DDTHH:MM:SSZ" (UTC)
+                    clean_date = game_date_str.replace("Z", "")
+                    if "T" in clean_date:
+                        dt_utc = datetime.strptime(clean_date.split(".")[0], "%Y-%m-%dT%H:%M:%S")
+                    else:
+                        dt_utc = datetime.strptime(clean_date.split(".")[0], "%Y-%m-%d %H:%M:%S")
+                    
+                    # Umrechnung von UTC auf deutsche Zeit (MEZ +1 / MESZ +2)
+                    # Da wir im Juli 2026 (Sommerzeit) sind, rechnen wir +2 Stunden
+                    dt_local = dt_utc + timedelta(hours=2)
+                    time_str = dt_local.strftime("%H:%M")
+                except Exception as e:
+                    print(f"Uhrzeit-Parsing fehlgeschlagen für {game_date_str}: {e}")
+                    # Einfacher Fallback-Versuch aus dem String
+                    if "T" in game_date_str:
+                        time_str = game_date_str.split("T")[1][:5]
 
-            # Zeile nach deinem Wunschformat bauen: Jesús Luzardo (PHI) | 01:10 @ Reds
+            # Zeile bauen: Jesús Luzardo (PHI) | 01:10 @ CIN
             line = f"{pitcher_name} ({team_code}) | {time_str} {vs_text}"
             starter_lines.append(line)
 
@@ -76,7 +103,6 @@ try:
     # 4. GESAMMELTEN WEBHOOK SENDEN
     # ==========================================
     if starter_lines:
-        # Erstellt die Liste untereinander für die Push-Nachricht
         full_content = "\n".join(starter_lines)
         print(f"Sende folgende Pitcher an HA:\n{full_content}")
 
@@ -86,9 +112,9 @@ try:
                 "content": full_content
             }
             response = requests.post(HA_WEBHOOK_URL, json=payload, timeout=10)
-            print(f"HA-Antwort: {response.status_code}")
+            print(f"HA-Antwort Status: {response.status_code}")
     else:
-        print("Heute starten keine deiner gesuchten Pitcher.")
+        print("Heute startet keiner der gesuchten Pitcher.")
 
 except Exception as e:
-    print(f"Fehler: {e}")
+    print(f"Allgemeiner Fehler im Skript: {e}")
