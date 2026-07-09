@@ -43,8 +43,8 @@ print(f"Suche nach Spielen für den {today}...")
 # 3. API-ABFRAGE & TEXT-FORMATIERUNG
 # ==========================================
 try:
-    # HIER KORRIGIERT: 'hydrate' statt 'hydration'
-    games = statsapi.schedule(date=today, hydrate="linescore")
+    # Komplett ohne 'hydrate' aufgerufen – das verhindert jegliche Argument-Fehler
+    games = statsapi.schedule(date=today)
     starter_lines = []
 
     for game in games:
@@ -84,7 +84,7 @@ try:
                     else:
                         dt_utc = datetime.strptime(clean_date.split(".")[0], "%Y-%m-%d %H:%M:%S")
                     
-                    # Umrechnung UTC -> deutsche Sommerzeit (+2 Std im Juli)
+                    # Umrechnung UTC -> deutsche Sommerzeit (+2 Std)
                     dt_local = dt_utc + timedelta(hours=2)
                     time_str = dt_local.strftime("%H:%M")
                 except Exception as e:
