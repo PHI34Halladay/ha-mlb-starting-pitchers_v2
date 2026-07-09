@@ -6,86 +6,89 @@ from datetime import datetime
 # ==========================================
 # 1. DYNAMISCHES LADEN DER PITCHER-LISTE
 # ==========================================
-
-# Pfad zur pitchers.txt ermitteln (relativ zum Skriptverzeichnis)
 script_dir = os.path.dirname(os.path.abspath(__file__))
 txt_path = os.path.join(script_dir, "pitchers.txt")
 
 TARGET_PITCHERS = []
 if os.path.exists(txt_path):
     with open(txt_path, "r", encoding="utf-8") as f:
-        # Liest jede Zeile, entfernt Zeilenumbrüche/Leerzeichen und ignoriert leere Zeilen
         TARGET_PITCHERS = [line.strip() for line in f if line.strip()]
     print(f"Erfolgreich {len(TARGET_PITCHERS)} Pitcher aus pitchers.txt geladen.")
 else:
-    print(f"FEHLER: {txt_path} wurde nicht gefunden! Bitte erstelle die Datei.")
+    print(f"FEHLER: {txt_path} wurde nicht gefunden!")
     exit(1)
 
 # ==========================================
-# 2. KONFIGURATION & WEBHOOKS
+# 2. KONFIGURATION
 # ==========================================
-
-# Home Assistant Webhook URL aus den GitHub Secrets (Umgebungsvariablen) laden
 HA_WEBHOOK_URL = os.environ.get("HA_WEBHOOK_URL")
-
-if not HA_WEBHOOK_URL:
-    print("Warnung: HA_WEBHOOK_URL ist nicht gesetzt. Benachrichtigungen werden nur in der Konsole ausgegeben.")
-
-# Das heutige Datum im korrekten Format für die MLB-API holen
 today = datetime.today().strftime('%Y-%m-%d')
 print(f"Suche nach Spielen für den {today}...")
 
 # ==========================================
-# 3. API-ABFRAGE & VERARBEITUNG
+# 3. API-ABFRAGE & TEXT-FORMATIERUNG
 # ==========================================
-
 try:
-    # Alle Spiele für den heutigen Tag von der MLB-API abrufen
     games = statsapi.schedule(date=today)
-    
-    found_any = False
+    starter_lines = []
 
     for game in games:
-        # Probieren, die voraussichtlichen Starting Pitcher zu ermitteln
         home_pitcher = game.get("home_probable_pitcher", "").strip()
         away_pitcher = game.get("away_probable_pitcher", "").strip()
         
-        # Abgleich mit unserer geladenen Liste
         match_home = home_pitcher in TARGET_PITCHERS if home_pitcher else False
         match_away = away_pitcher in TARGET_PITCHERS if away_pitcher else False
 
         if match_home or match_away:
-            found_any = True
-            
-            # Details für die Benachrichtigung zusammenbauen
+            # Relevante Daten extrahieren
             pitcher_name = home_pitcher if match_home else away_pitcher
-            team_name = game.get("home_name") if match_home else game.get("away_name")
-            opponent = game.get("away_name") if match_home else game.get("home_name")
-            game_time = game.get("game_date") # Enthält meistens die Uhrzeit
             
-            message = f"⚾ {pitcher_name} startet heute für die {team_name} gegen die {opponent}! Spielzeit: {game_time}"
-            print(f"Treffer gefunden: {message}")
-            
-            # Webhook an Home Assistant senden, falls URL vorhanden ist
-            if HA_WEBHOOK_URL:
-                payload = {
-                    "pitcher": pitcher_name,
-                    "team": team_name,
-                    "opponent": opponent,
-                    "time": game_time,
-                    "message": message
-                }
-                try:
-                    response = requests.post(HA_WEBHOOK_URL, json=payload, timeout=10)
-                    if response.status_code == 200:
-                        print(f"Erfolgreich an Home Assistant gesendet für {pitcher_name}.")
-                    else:
-                        print(f"Fehler beim Senden an HA. Status-Code: {response.status_code}")
-                except Exception as e:
-                    print(f"Fehler bei der Verbindung zu Home Assistant: {e}")
+            # Team-Kürzel und Gegner ermitteln
+            if match_home:
+                team_code = game.get("home_name")[:3].upper() # Fallback-Kürzel
+                opponent = game.get("away_name")
+                # Versuche das echte Kürzel zu nehmen, falls vorhanden
+                message_team = f"{team_code}" 
+                vs_text = f"vs. {opponent}"
+            else:
+                team_code = game.get("away_name")[:3].upper()
+                opponent = game.get("home_name")
+                vs_text = f"@ {opponent}"
 
-    if not found_any:
-        print("Heute startet keiner der gesuchten Pitcher.")
+            # Uhrzeit formatieren (Extrahiert HH:MM aus dem ISO-String)
+            # MLB-Times sind oft in UTC/ET, statsapi liefert meist lokale oder bereits formatierte Strings
+            game_date_str = game.get("game_date", "")
+            try:
+                # Versuche die Uhrzeit sauber zu parsen (Beispiel: 2026-07-09T19:10:00Z)
+                dt = datetime.strptime(game_date_str, "%Y-%m-%dT%H:%M:%SZ")
+                # Hier kannst du bei Bedarf eine Zeitverschiebung einrechnen, falls die API UTC liefert:
+                # dt = dt + timedelta(hours=2) # Für deutsche Sommerzeit
+                time_str = dt.strftime("%H:%M")
+            except:
+                # Fallback, falls das Format abweicht
+                time_str = game_date_str[-8:-3] if len(game_date_str) > 10 else "??:??"
+
+            # Zeile nach deinem Wunschformat bauen: Jesús Luzardo (PHI) | 01:10 @ Reds
+            line = f"{pitcher_name} ({team_code}) | {time_str} {vs_text}"
+            starter_lines.append(line)
+
+    # ==========================================
+    # 4. GESAMMELTEN WEBHOOK SENDEN
+    # ==========================================
+    if starter_lines:
+        # Erstellt die Liste untereinander für die Push-Nachricht
+        full_content = "\n".join(starter_lines)
+        print(f"Sende folgende Pitcher an HA:\n{full_content}")
+
+        if HA_WEBHOOK_URL:
+            payload = {
+                "title": "⚾ Today's Starters on real⚾",
+                "content": full_content
+            }
+            response = requests.post(HA_WEBHOOK_URL, json=payload, timeout=10)
+            print(f"HA-Antwort: {response.status_code}")
+    else:
+        print("Heute starten keine deiner gesuchten Pitcher.")
 
 except Exception as e:
-    print(f"Ein Fehler bei der API-Abfrage ist aufgetreten: {e}")
+    print(f"Fehler: {e}")
