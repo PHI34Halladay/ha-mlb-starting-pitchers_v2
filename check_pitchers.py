@@ -71,25 +71,32 @@ try:
                 team_code = away_code
                 vs_text = f"@ {home_code}"
 
-            # Uhrzeit über die Game ID ermitteln, da das 'game_date' im Schedule unvollständig ist
+            # Uhrzeit aus dem direkten Feld 'game_datetime' auslesen
             time_str = "??:??"
-            game_id = game.get("game_id")
+            game_datetime_str = game.get("game_datetime") # Liefert "YYYY-MM-DDTHH:MM:SSZ"
             
-            if game_id:
+            if game_datetime_str:
                 try:
-                    game_data = statsapi.boxscore_data(game_id)
-                    # Holt die exakte UTC-Zeit aus den Spieldaten (Format: "2026-07-09T19:10:00Z")
-                    game_datetime_utc_str = game_data.get("gameBoxscoreData", {}).get("game", {}).get("gameDate")
+                    clean_date = game_datetime_str.replace("Z", "").split(".")[0]
+                    dt_utc = datetime.strptime(clean_date, "%Y-%m-%dT%H:%M:%S")
                     
-                    if game_datetime_utc_str:
-                        clean_date = game_datetime_utc_str.replace("Z", "").split(".")[0]
-                        dt_utc = datetime.strptime(clean_date, "%Y-%m-%dT%H:%M:%S")
-                        
-                        # Umrechnung UTC -> deutsche Sommerzeit (+2 Std im Juli)
-                        dt_local = dt_utc + timedelta(hours=2)
-                        time_str = dt_local.strftime("%H:%M")
+                    # Umrechnung UTC -> deutsche Sommerzeit (+2 Std im Juli)
+                    dt_local = dt_utc + timedelta(hours=2)
+                    time_str = dt_local.strftime("%H:%M")
                 except Exception as time_err:
-                    print(f"Detailliertes Uhrzeit-Parsing fehlgeschlagen für Game {game_id}: {time_err}")
+                    print(f"Fehler beim Parsen von game_datetime ({game_datetime_str}): {time_err}")
+            
+            # Doppelter Boden: Falls es immer noch ??:?? ist, schauen wir, ob wir eine Text-Uhrzeit finden
+            if time_str == "??:??":
+                # statsapi liefert manchmal lokale Uhrzeiten im Freitext (z.B. "7:10 PM")
+                local_time_str = game.get("game_time")
+                if local_time_str and local_time_str != "12:00 AM":
+                    time_str = local_time_str
+                else:
+                    # Dritter Fallback: Spielstatus anzeigen (z.B. "Final", "Live", "Postponed")
+                    status = game.get("status", "")
+                    if status:
+                        time_str = status
 
             # Zeile bauen
             line = f"{pitcher_name} ({team_code}) | {time_str} {vs_text}"
