@@ -1,141 +1,91 @@
-import datetime
 import os
 import requests
+import statsapi
+from datetime import datetime
 
-# Deine persönliche Pitcher-Liste
-MY_PITCHERS = [
-    "Paul Skenes", "Shohei Ohtani", "Aaron Nola", "Cristopher Sanchez",
-    "Cam Schlittler", "Tarik Skubal", "Dylan Cease", "Yoshinobu Yamamoto",
-    "Jacob Misiorowski", "Sandy Alcantara", "Kevin Gausman", "Zack Wheeler",
-    "Max Fried", "Jesús Luzardo", "Andrew Painter", "Justin Wrobleski",
-    "Gerrit Cole", "Spencer Strider", "Ranger Suarez"
-]
+# ==========================================
+# 1. DYNAMISCHES LADEN DER PITCHER-LISTE
+# ==========================================
 
-# Vollständiges MLB Mapping für alle 30 Teams (Kürzel & Kurzname)
-TEAM_MAP = {
-    "Arizona Diamondbacks": {"abbr": "AZ", "short": "D-backs"},
-    "Atlanta Braves": {"abbr": "ATL", "short": "Braves"},
-    "Baltimore Orioles": {"abbr": "BAL", "short": "Orioles"},
-    "Boston Red Sox": {"abbr": "BOS", "short": "Red Sox"},
-    "Chicago Cubs": {"abbr": "CHC", "short": "Cubs"},
-    "Chicago White Sox": {"abbr": "CWS", "short": "White Sox"},
-    "Cincinnati Reds": {"abbr": "CIN", "short": "Reds"},
-    "Cleveland Guardians": {"abbr": "CLE", "short": "Guardians"},
-    "Colorado Rockies": {"abbr": "COL", "short": "Rockies"},
-    "Detroit Tigers": {"abbr": "DET", "short": "Tigers"},
-    "Houston Astros": {"abbr": "HOU", "short": "Astros"},
-    "Kansas City Royals": {"abbr": "KC", "short": "Royals"},
-    "Los Angeles Angels": {"abbr": "LAA", "short": "Angels"},
-    "Los Angeles Dodgers": {"abbr": "LAD", "short": "Dodgers"},
-    "Miami Marlins": {"abbr": "MIA", "short": "Marlins"},
-    "Milwaukee Brewers": {"abbr": "MIL", "short": "Brewers"},
-    "Minnesota Twins": {"abbr": "MIN", "short": "Twins"},
-    "New York Mets": {"abbr": "NYM", "short": "Mets"},
-    "New York Yankees": {"abbr": "NYY", "short": "Yankees"},
-    "Oakland Athletics": {"abbr": "OAK", "short": "Athletics"},
-    "Philadelphia Phillies": {"abbr": "PHI", "short": "Phillies"},
-    "Pittsburgh Pirates": {"abbr": "PIT", "short": "Pirates"},
-    "San Diego Padres": {"abbr": "SD", "short": "Padres"},
-    "San Francisco Giants": {"abbr": "SF", "short": "Giants"},
-    "Seattle Mariners": {"abbr": "SEA", "short": "Mariners"},
-    "St. Louis Cardinals": {"abbr": "STL", "short": "Cardinals"},
-    "Tampa Bay Rays": {"abbr": "TB", "short": "Rays"},
-    "Texas Rangers": {"abbr": "TEX", "short": "Rangers"},
-    "Toronto Blue Jays": {"abbr": "TOR", "short": "Blue Jays"},
-    "Washington Nationals": {"abbr": "WSH", "short": "Nationals"}
-}
+# Pfad zur pitchers.txt ermitteln (relativ zum Skriptverzeichnis)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+txt_path = os.path.join(script_dir, "pitchers.txt")
 
+TARGET_PITCHERS = []
+if os.path.exists(txt_path):
+    with open(txt_path, "r", encoding="utf-8") as f:
+        # Liest jede Zeile, entfernt Zeilenumbrüche/Leerzeichen und ignoriert leere Zeilen
+        TARGET_PITCHERS = [line.strip() for line in f if line.strip()]
+    print(f"Erfolgreich {len(TARGET_PITCHERS)} Pitcher aus pitchers.txt geladen.")
+else:
+    print(f"FEHLER: {txt_path} wurde nicht gefunden! Bitte erstelle die Datei.")
+    exit(1)
+
+# ==========================================
+# 2. KONFIGURATION & WEBHOOKS
+# ==========================================
+
+# Home Assistant Webhook URL aus den GitHub Secrets (Umgebungsvariablen) laden
 HA_WEBHOOK_URL = os.environ.get("HA_WEBHOOK_URL")
 
-def get_team_info(team_name):
-    return TEAM_MAP.get(team_name, {"abbr": team_name, "short": team_name})
+if not HA_WEBHOOK_URL:
+    print("Warnung: HA_WEBHOOK_URL ist nicht gesetzt. Benachrichtigungen werden nur in der Konsole ausgegeben.")
 
-def convert_to_local_time(utc_string):
-    if not utc_string:
-        return "--:--"
-    try:
-        utc_dt = datetime.datetime.strptime(utc_string, "%Y-%m-%dT%H:%M:%SZ")
-        import zoneinfo
-        local_tz = zoneinfo.ZoneInfo("Europe/Berlin")
-        local_dt = utc_dt.replace(tzinfo=datetime.timezone.utc).astimezone(local_tz)
-        return local_dt.strftime("%H:%M")
-    except Exception:
-        return utc_string[11:16]
+# Das heutige Datum im korrekten Format für die MLB-API holen
+today = datetime.today().strftime('%Y-%m-%d')
+print(f"Suche nach Spielen für den {today}...")
 
-def check_pitchers():
-    today = datetime.date.today().strftime("%Y-%m-%d")
-    url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}&hydrate=probablePitcher"
+# ==========================================
+# 3. API-ABFRAGE & VERARBEITUNG
+# ==========================================
+
+try:
+    # Alle Spiele für den heutigen Tag von der MLB-API abrufen
+    games = statsapi.schedule(date=today)
     
-    # "Browser-Tarnkappe" (User-Agent), damit die MLB-Firewall uns auf GitHub nicht blockiert
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    
-    print(f"--- MLB-DIAGNOSE-LOGS FÜR DEN {today} ---")
-    print(f"Rufe API auf: {url}")
-    
-    try:
-        res = requests.get(url, headers=headers, timeout=15)
-        print(f"Server-Antwort Status-Code: {res.status_code}")
-        res.raise_for_status()
-        response = res.json()
-    except Exception as e:
-        print(f"❌ KRITISCHER FEHLER beim API-Aufruf: {e}")
-        return
+    found_any = False
 
-    alerts = []
-    dates = response.get("dates", [])
-    if not dates:
-        print("ℹ️ Keine Spiele im heutigen Kalender gefunden.")
-        return
+    for game in games:
+        # Probieren, die voraussichtlichen Starting Pitcher zu ermitteln
+        home_pitcher = game.get("home_probable_pitcher", "").strip()
+        away_pitcher = game.get("away_probable_pitcher", "").strip()
+        
+        # Abgleich mit unserer geladenen Liste
+        match_home = home_pitcher in TARGET_PITCHERS if home_pitcher else False
+        match_away = away_pitcher in TARGET_PITCHERS if away_pitcher else False
 
-    print("\n--- Gefeaturte Spiele & Pitcher heute laut MLB-Datenbank: ---")
-    for date_info in dates:
-        for game in date_info.get("games", []):
-            teams = game.get("teams", {})
-            away_full = teams.get("away", {}).get("team", {}).get("name")
-            home_full = teams.get("home", {}).get("team", {}).get("name")
+        if match_home or match_away:
+            found_any = True
             
-            away_info = get_team_info(away_full)
-            home_info = get_team_info(home_full)
-
-            local_time = convert_to_local_time(game.get("gameDate"))
+            # Details für die Benachrichtigung zusammenbauen
+            pitcher_name = home_pitcher if match_home else away_pitcher
+            team_name = game.get("home_name") if match_home else game.get("away_name")
+            opponent = game.get("away_name") if match_home else game.get("home_name")
+            game_time = game.get("game_date") # Enthält meistens die Uhrzeit
             
-            away_pitcher = teams.get("away", {}).get("probablePitcher", {}).get("fullName")
-            home_pitcher = teams.get("home", {}).get("probablePitcher", {}).get("fullName")
+            message = f"⚾ {pitcher_name} startet heute für die {team_name} gegen die {opponent}! Spielzeit: {game_time}"
+            print(f"Treffer gefunden: {message}")
             
-            # Diagnose-Ausgabe für jedes Spiel im GitHub-Protokoll
-            print(f"Match: {away_info['short']} @ {home_info['short']} um {local_time} Uhr")
-            print(f"   -> Starter Away: {away_pitcher if away_pitcher else 'TBD'}")
-            print(f"   -> Starter Home: {home_pitcher if home_pitcher else 'TBD'}")
+            # Webhook an Home Assistant senden, falls URL vorhanden ist
+            if HA_WEBHOOK_URL:
+                payload = {
+                    "pitcher": pitcher_name,
+                    "team": team_name,
+                    "opponent": opponent,
+                    "time": game_time,
+                    "message": message
+                }
+                try:
+                    response = requests.post(HA_WEBHOOK_URL, json=payload, timeout=10)
+                    if response.status_code == 200:
+                        print(f"Erfolgreich an Home Assistant gesendet für {pitcher_name}.")
+                    else:
+                        print(f"Fehler beim Senden an HA. Status-Code: {response.status_code}")
+                except Exception as e:
+                    print(f"Fehler bei der Verbindung zu Home Assistant: {e}")
 
-            # Auswärtspitcher abgleichen
-            if away_pitcher and away_pitcher in MY_PITCHERS:
-                alerts.append(f"⚾ {away_pitcher} ({away_info['abbr']}) | {local_time} @ {home_info['short']}")
-                print(f"   🎯 TREFFER! {away_pitcher} steht auf deiner Favoritenliste!")
+    if not found_any:
+        print("Heute startet keiner der gesuchten Pitcher.")
 
-            # Heimpitcher abgleichen
-            if home_pitcher and home_pitcher in MY_PITCHERS:
-                alerts.append(f"⚾ {home_pitcher} ({home_info['abbr']}) | {local_time} vs. {away_info['short']}")
-                print(f"   🎯 TREFFER! {home_pitcher} steht auf deiner Favoritenliste!")
-
-    print("\n--- Zusammenfassung ---")
-    if alerts:
-        message = "\n".join(alerts)
-        print(f"Sende folgende Nachricht an Home Assistant:\n{message}")
-        send_to_homeassistant(message)
-    else:
-        print("Es wurde heute kein Pitcher deiner Favoritenliste gefunden.")
-
-def send_to_homeassistant(text):
-    if HA_WEBHOOK_URL:
-        try:
-            res = requests.post(HA_WEBHOOK_URL, json={"message": text}, timeout=10)
-            print(f"Webhook erfolgreich abgesetzt. Antwort-Status: {res.status_code}")
-        except Exception as e:
-            print(f"❌ Fehler beim Senden an Home Assistant: {e}")
-    else:
-        print("⚠️ Keine HA_WEBHOOK_URL als Secret in GitHub hinterlegt.")
-
-if __name__ == "__main__":
-    check_pitchers()
+except Exception as e:
+    print(f"Ein Fehler bei der API-Abfrage ist aufgetreten: {e}")
