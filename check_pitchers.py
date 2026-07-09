@@ -43,8 +43,8 @@ print(f"Suche nach Spielen für den {today}...")
 # 3. API-ABFRAGE & TEXT-FORMATIERUNG
 # ==========================================
 try:
-    # Schedule inkl. Linescore laden, um sicher an die UTC-Uhrzeiten zu kommen
-    games = statsapi.schedule(date=today, hydration="linescore")
+    # HIER KORRIGIERT: 'hydrate' statt 'hydration'
+    games = statsapi.schedule(date=today, hydrate="linescore")
     starter_lines = []
 
     for game in games:
@@ -61,7 +61,7 @@ try:
             home_team_long = game.get("home_name", "")
             away_team_long = game.get("away_name", "")
             
-            # Kürzel aus Mapping holen (Fallback auf die ersten 3 Buchstaben, falls unbekannt)
+            # Kürzel aus Mapping holen
             home_code = TEAM_MAP.get(home_team_long, home_team_long[:3].upper())
             away_code = TEAM_MAP.get(away_team_long, away_team_long[:3].upper())
             
@@ -72,30 +72,27 @@ try:
                 team_code = away_code
                 vs_text = f"@ {home_code}"
 
-            # Uhrzeit aus "game_date" extrahieren und in deutsche Zeit konvertieren
+            # Uhrzeit aus "game_date" extrahieren
             game_date_str = game.get("game_date", "")
             time_str = "??:??"
             
             if game_date_str:
                 try:
-                    # statsapi liefert meistens "YYYY-MM-DDTHH:MM:SSZ" (UTC)
                     clean_date = game_date_str.replace("Z", "")
                     if "T" in clean_date:
                         dt_utc = datetime.strptime(clean_date.split(".")[0], "%Y-%m-%dT%H:%M:%S")
                     else:
                         dt_utc = datetime.strptime(clean_date.split(".")[0], "%Y-%m-%d %H:%M:%S")
                     
-                    # Umrechnung von UTC auf deutsche Zeit (MEZ +1 / MESZ +2)
-                    # Da wir im Juli 2026 (Sommerzeit) sind, rechnen wir +2 Stunden
+                    # Umrechnung UTC -> deutsche Sommerzeit (+2 Std im Juli)
                     dt_local = dt_utc + timedelta(hours=2)
                     time_str = dt_local.strftime("%H:%M")
                 except Exception as e:
                     print(f"Uhrzeit-Parsing fehlgeschlagen für {game_date_str}: {e}")
-                    # Einfacher Fallback-Versuch aus dem String
                     if "T" in game_date_str:
                         time_str = game_date_str.split("T")[1][:5]
 
-            # Zeile bauen: Jesús Luzardo (PHI) | 01:10 @ CIN
+            # Zeile bauen
             line = f"{pitcher_name} ({team_code}) | {time_str} {vs_text}"
             starter_lines.append(line)
 
@@ -113,6 +110,8 @@ try:
             }
             response = requests.post(HA_WEBHOOK_URL, json=payload, timeout=10)
             print(f"HA-Antwort Status: {response.status_code}")
+        else:
+            print("Hinweis: HA_WEBHOOK_URL ist nicht konfiguriert.")
     else:
         print("Heute startet keiner der gesuchten Pitcher.")
 
