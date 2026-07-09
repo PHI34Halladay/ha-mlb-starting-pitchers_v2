@@ -7,7 +7,7 @@ MY_PITCHERS = [
     "Paul Skenes", "Shohei Ohtani", "Aaron Nola", "Cristopher Sanchez",
     "Cam Schlittler", "Tarik Skubal", "Dylan Cease", "Yoshinobu Yamamoto",
     "Jacob Misiorowski", "Sandy Alcantara", "Kevin Gausman", "Zack Wheeler",
-    "Max Fried", "Jesus Luzardo", "Andrew Painter", "Justin Wrobleski",
+    "Max Fried", "Jesús Luzardo", "Andrew Painter", "Justin Wrobleski",
     "Gerrit Cole", "Spencer Strider", "Ranger Suarez"
 ]
 
