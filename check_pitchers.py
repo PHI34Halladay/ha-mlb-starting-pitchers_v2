@@ -43,7 +43,6 @@ print(f"Suche nach Spielen für den {today}...")
 # 3. API-ABFRAGE & TEXT-FORMATIERUNG
 # ==========================================
 try:
-    # Komplett ohne 'hydrate' aufgerufen – das verhindert jegliche Argument-Fehler
     games = statsapi.schedule(date=today)
     starter_lines = []
 
@@ -72,25 +71,25 @@ try:
                 team_code = away_code
                 vs_text = f"@ {home_code}"
 
-            # Uhrzeit aus "game_date" extrahieren
-            game_date_str = game.get("game_date", "")
+            # Uhrzeit über die Game ID ermitteln, da das 'game_date' im Schedule unvollständig ist
             time_str = "??:??"
+            game_id = game.get("game_id")
             
-            if game_date_str:
+            if game_id:
                 try:
-                    clean_date = game_date_str.replace("Z", "")
-                    if "T" in clean_date:
-                        dt_utc = datetime.strptime(clean_date.split(".")[0], "%Y-%m-%dT%H:%M:%S")
-                    else:
-                        dt_utc = datetime.strptime(clean_date.split(".")[0], "%Y-%m-%d %H:%M:%S")
+                    game_data = statsapi.boxscore_data(game_id)
+                    # Holt die exakte UTC-Zeit aus den Spieldaten (Format: "2026-07-09T19:10:00Z")
+                    game_datetime_utc_str = game_data.get("gameBoxscoreData", {}).get("game", {}).get("gameDate")
                     
-                    # Umrechnung UTC -> deutsche Sommerzeit (+2 Std)
-                    dt_local = dt_utc + timedelta(hours=2)
-                    time_str = dt_local.strftime("%H:%M")
-                except Exception as e:
-                    print(f"Uhrzeit-Parsing fehlgeschlagen für {game_date_str}: {e}")
-                    if "T" in game_date_str:
-                        time_str = game_date_str.split("T")[1][:5]
+                    if game_datetime_utc_str:
+                        clean_date = game_datetime_utc_str.replace("Z", "").split(".")[0]
+                        dt_utc = datetime.strptime(clean_date, "%Y-%m-%dT%H:%M:%S")
+                        
+                        # Umrechnung UTC -> deutsche Sommerzeit (+2 Std im Juli)
+                        dt_local = dt_utc + timedelta(hours=2)
+                        time_str = dt_local.strftime("%H:%M")
+                except Exception as time_err:
+                    print(f"Detailliertes Uhrzeit-Parsing fehlgeschlagen für Game {game_id}: {time_err}")
 
             # Zeile bauen
             line = f"{pitcher_name} ({team_code}) | {time_str} {vs_text}"
