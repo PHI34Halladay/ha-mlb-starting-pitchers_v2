@@ -1,13 +1,6 @@
 import datetime
 import os
 import requests
-import zoneinfo
-
-# ==========================================
-# 1. KONFIGURATION & DATEN LADEN
-# ==========================================
-PITCHERS_FILE = "pitchers.txt"
-HA_WEBHOOK_URL = os.environ.get("HA_WEBHOOK_URL")
 
 # Pitcher dynamisch aus Textdatei laden
 TRACKED_PITCHERS = set()
@@ -21,7 +14,7 @@ else:
 
 # Vollständiges MLB Mapping für alle 30 Teams (Kürzel & Kurzname)
 TEAM_MAP = {
-    "Arizona Diamondbacks": {"abbr": "ARI", "short": "D-backs"},
+    "Arizona Diamondbacks": {"abbr": "AZ", "short": "D-backs"},
     "Atlanta Braves": {"abbr": "ATL", "short": "Braves"},
     "Baltimore Orioles": {"abbr": "BAL", "short": "Orioles"},
     "Boston Red Sox": {"abbr": "BOS", "short": "Red Sox"},
@@ -49,41 +42,42 @@ TEAM_MAP = {
     "St. Louis Cardinals": {"abbr": "STL", "short": "Cardinals"},
     "Tampa Bay Rays": {"abbr": "TB", "short": "Rays"},
     "Texas Rangers": {"abbr": "TEX", "short": "Rangers"},
-    "Toronto Blue Jays": {"abspath": "TOR", "abbr": "TOR", "short": "Blue Jays"},
+    "Toronto Blue Jays": {"abbr": "TOR", "short": "Blue Jays"},
     "Washington Nationals": {"abbr": "WSH", "short": "Nationals"}
 }
 
+HA_WEBHOOK_URL = os.environ.get("HA_WEBHOOK_URL")
+
 def get_team_info(team_name):
-    return TEAM_MAP.get(team_name, {"abbr": team_name[:3].upper(), "short": team_name})
+    return TEAM_MAP.get(team_name, {"abbr": team_name, "short": team_name})
 
 def convert_to_local_time(utc_string):
     if not utc_string:
         return "--:--"
     try:
-        # Extrahiert das korrekte ISO-Format der MLB-API
-        clean_string = utc_string.split(".")[0].replace("Z", "")
-        utc_dt = datetime.datetime.strptime(clean_string, "%Y-%m-%dT%H:%M:%S")
+        utc_dt = datetime.datetime.strptime(utc_string, "%Y-%m-%dT%H:%M:%SZ")
+        import zoneinfo
         local_tz = zoneinfo.ZoneInfo("Europe/Berlin")
         local_dt = utc_dt.replace(tzinfo=datetime.timezone.utc).astimezone(local_tz)
         return local_dt.strftime("%H:%M")
-    except Exception as e:
-        print(f"Zeitkonvertierungsfehler für {utc_string}: {e}")
-        return utc_string[11:16] if len(utc_string) > 16 else "--:--"
+    except Exception:
+        return utc_string[11:16]
 
-# ==========================================
-# 2. API-ABFRAGE & VERARBEITUNG
-# ==========================================
 def check_pitchers():
     today = datetime.date.today().strftime("%Y-%m-%d")
     url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={today}&hydrate=probablePitcher"
     
+    # "Browser-Tarnkappe" (User-Agent), damit die MLB-Firewall uns auf GitHub nicht blockiert
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     
-    print(f"Rufe MLB-API auf für {today}...")
+    print(f"--- MLB-DIAGNOSE-LOGS FÜR DEN {today} ---")
+    print(f"Rufe API auf: {url}")
+    
     try:
         res = requests.get(url, headers=headers, timeout=15)
+        print(f"Server-Antwort Status-Code: {res.status_code}")
         res.raise_for_status()
         response = res.json()
     except Exception as e:
@@ -92,7 +86,11 @@ def check_pitchers():
 
     alerts = []
     dates = response.get("dates", [])
-    
+    if not dates:
+        print("ℹ️ Keine Spiele im heutigen Kalender gefunden.")
+        return
+
+    print("\n--- Gefeaturte Spiele & Pitcher heute laut MLB-Datenbank: ---")
     for date_info in dates:
         for game in date_info.get("games", []):
             teams = game.get("teams", {})
@@ -107,41 +105,38 @@ def check_pitchers():
             away_pitcher = teams.get("away", {}).get("probablePitcher", {}).get("fullName")
             home_pitcher = teams.get("home", {}).get("probablePitcher", {}).get("fullName")
             
+            # Diagnose-Ausgabe für jedes Spiel im GitHub-Protokoll
+            print(f"Match: {away_info['short']} @ {home_info['short']} um {local_time} Uhr")
+            print(f"   -> Starter Away: {away_pitcher if away_pitcher else 'TBD'}")
+            print(f"   -> Starter Home: {home_pitcher if home_pitcher else 'TBD'}")
+
             # Auswärtspitcher abgleichen
-            if away_pitcher and away_pitcher in TRACKED_PITCHERS:
-                # Format: Jesús Luzardo (PHI) | 01:10 @ Reds
-                line = f"{away_pitcher} ({away_info['abbr']}) | {local_time} @ {home_info['short']}"
-                alerts.append(line)
-                print(f"🎯 TREFFER! {line}")
+            if away_pitcher and away_pitcher in MY_PITCHERS:
+                alerts.append(f"⚾ {away_pitcher} ({away_info['abbr']}) | {local_time} @ {home_info['short']}")
+                print(f"   🎯 TREFFER! {away_pitcher} steht auf deiner Favoritenliste!")
 
             # Heimpitcher abgleichen
-            if home_pitcher and home_pitcher in TRACKED_PITCHERS:
-                # Format: Jesús Luzardo (PHI) | 01:10 vs. Reds
-                line = f"{home_pitcher} ({home_info['abbr']}) | {local_time} vs. {away_info['short']}"
-                alerts.append(line)
-                print(f"🎯 TREFFER! {line}")
+            if home_pitcher and home_pitcher in MY_PITCHERS:
+                alerts.append(f"⚾ {home_pitcher} ({home_info['abbr']}) | {local_time} vs. {away_info['short']}")
+                print(f"   🎯 TREFFER! {home_pitcher} steht auf deiner Favoritenliste!")
 
-    # ==========================================
-    # 3. GESAMMELTEN WEBHOOK SENDEN
-    # ==========================================
+    print("\n--- Zusammenfassung ---")
     if alerts:
-        message_content = "\n".join(alerts)
-        print(f"\nSende an Home Assistant:\n{message_content}")
-        
-        if HA_WEBHOOK_URL:
-            payload = {
-                "title": "⚾ Today's Starters on real⚾",
-                "content": message_content
-            }
-            try:
-                req = requests.post(HA_WEBHOOK_URL, json=payload, timeout=10)
-                print(f"Webhook gesendet. Status: {req.status_code}")
-            except Exception as e:
-                print(f"❌ Fehler beim Senden des Webhooks: {e}")
-        else:
-            print("⚠️ Keine HA_WEBHOOK_URL gefunden.")
+        message = "\n".join(alerts)
+        print(f"Sende folgende Nachricht an Home Assistant:\n{message}")
+        send_to_homeassistant(message)
     else:
-        print("Heute starten keine deiner beobachteten Pitcher.")
+        print("Es wurde heute kein Pitcher deiner Favoritenliste gefunden.")
+
+def send_to_homeassistant(text):
+    if HA_WEBHOOK_URL:
+        try:
+            res = requests.post(HA_WEBHOOK_URL, json={"message": text}, timeout=10)
+            print(f"Webhook erfolgreich abgesetzt. Antwort-Status: {res.status_code}")
+        except Exception as e:
+            print(f"❌ Fehler beim Senden an Home Assistant: {e}")
+    else:
+        print("⚠️ Keine HA_WEBHOOK_URL als Secret in GitHub hinterlegt.")
 
 if __name__ == "__main__":
     check_pitchers()
